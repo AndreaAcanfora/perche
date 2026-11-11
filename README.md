@@ -1,6 +1,6 @@
 # perche
 
-**`git blame` for data.** Run a SQL query, point at any row of the result, and see the exact source rows that produced it, through every join, filter, `GROUP BY`, `DISTINCT`, CTE and `UNION`.
+**`git blame` for data.** Run a SQL query, point at any row of the result, and see the exact source rows that produced it, through every join, filter, `GROUP BY`, `DISTINCT`, CTE, `UNION`, `INTERSECT` and `EXCEPT`.
 
 *Perché* is Italian for “why”.
 
@@ -85,7 +85,7 @@ perche parses the query with [sqlglot](https://github.com/tobymao/sqlglot) and r
 
 - each table, file or view read by the query gets an extra column holding `[rowid]`;
 - projections, filters, joins, `ORDER BY` and `LIMIT` pass those lists through;
-- `GROUP BY`, aggregates, `DISTINCT` and `UNION` concatenate the lists of the rows they fold together;
+- `GROUP BY`, aggregates, `DISTINCT`, `UNION` and `INTERSECT` concatenate the lists of the rows they fold together; `EXCEPT` keeps only the left side's lists, since the right side's rows are the ones that did not match;
 - CTEs and subqueries are rewritten recursively; each reference to a CTE gets its own lineage columns, so self-joins work.
 
 The rewritten query (see it with `--sql`) runs in DuckDB, and the result stays in a temporary table. Python only sees the ids of the rows you ask about.
@@ -99,8 +99,8 @@ This is *lineage* in the sense of [Cui and Widom](https://dl.acm.org/doi/10.1145
 The tests check perche against ground truth computed independently:
 
 - **Exact oracle.** 300 random queries over a shop database with NULLs, orphans and duplicates (inner and left joins across up to three tables, AND/OR filters, `GROUP BY`, global aggregates, `DISTINCT`). For each query the generator also writes an oracle query that collects the rowids by hand. Both must produce exactly the same lineage.
-- **Metamorphic.** Wrapping each query in a subquery, in a CTE, or in a `UNION ALL` with itself must not change any row's lineage.
-- **Sufficiency.** Re-running a query, composed with CTEs and `UNION`, on *only* the lineage rows of a result row must produce that row again.
+- **Metamorphic.** Wrapping each query in a subquery, in a CTE, or in a `UNION ALL` with itself must not change any row's lineage; `INTERSECT`, `UNION` and `EXCEPT` of a query with itself must match its `DISTINCT`.
+- **Sufficiency.** Re-running a query, composed with CTEs, `UNION`, `INTERSECT` and `EXCEPT`, on *only* the lineage rows of a result row must produce that row again.
 
 Breaking the engine on purpose shows the tests notice: dropping the lineage of joined tables fails 233 of them, and treating `DISTINCT` like a projection fails 63.
 
@@ -118,13 +118,14 @@ Lineage for an aggregate holds every input row id of its group, so a query that 
 
 ## Not tracked yet
 
-perche raises `UnsupportedQuery` instead of guessing for `INTERSECT`, `EXCEPT`, recursive CTEs, `DISTINCT ON` and `DISTINCT` combined with aggregation.
+perche raises `UnsupportedQuery` instead of guessing for `INTERSECT ALL`, `EXCEPT ALL`, recursive CTEs, `DISTINCT ON` and `DISTINCT` combined with aggregation.
 
 These are accepted, but not everything they read shows up in the lineage:
 
 - **Subqueries** in `WHERE`, `SELECT` or `HAVING` (`WHERE x IN (SELECT …)`, scalar subqueries): their rows are not part of the lineage.
 - **Window functions:** a row's lineage is its own input row, not the whole window.
 - **`VALUES`, `UNNEST` and `LATERAL`** in `FROM` contribute no rows.
+- **Whole-row references** such as `hash(t)` or `SELECT t FROM t` see perche's hidden lineage columns as extra fields, so their values change. Name the columns instead.
 
 ## Prior art
 
@@ -140,7 +141,7 @@ perche needs no database server, extension or fork. It works on files, and its g
 
 - Pipelines: lineage across several steps (`raw → clean → report`), each a SQL file.
 - A browser dashboard where clicking a chart shows the source rows behind it, running entirely on DuckDB-Wasm.
-- `INTERSECT` and `EXCEPT`, and lineage through subqueries in `WHERE`.
+- Lineage through subqueries in `WHERE` (`IN`, `EXISTS`).
 
 ## License
 

@@ -123,6 +123,13 @@ def test_wrapping_preserves_lineage(seed):
     doubled = perche.trace(f"SELECT * FROM ({query}) a UNION ALL SELECT * FROM ({query}) b", con)
     assert lineage_bag(doubled, tables) == Counter({k: 2 * v for k, v in base.items()})
 
+    # Set operations of a query with itself: same rows and lineage as DISTINCT.
+    distinct = lineage_bag(perche.trace(f"SELECT DISTINCT * FROM ({query}) d", con), tables)
+    assert lineage_bag(perche.trace(f"({query}) INTERSECT ({query})", con), tables) == distinct
+    assert lineage_bag(perche.trace(f"({query}) UNION ({query})", con), tables) == distinct
+    nothing = f"SELECT * FROM ({query}) e WHERE false"
+    assert lineage_bag(perche.trace(f"({query}) EXCEPT ({nothing})", con), tables) == distinct
+
 
 @pytest.mark.parametrize("seed", range(80))
 def test_lineage_alone_reproduces_the_row(seed):
@@ -133,7 +140,10 @@ def test_lineage_alone_reproduces_the_row(seed):
     if rnd.random() < 0.5:
         query = f"WITH q AS ({query}) SELECT * FROM q"
     if rnd.random() < 0.3:
-        query = f"{query} UNION SELECT * FROM ({query}) z"
+        op = rnd.choice(["UNION", "INTERSECT", "EXCEPT"])
+        first = perche.trace(query, con).columns[0]
+        half = f'hash(z."{first}") % 2 = 0'
+        query = f"({query}) {op} (SELECT * FROM ({query}) z WHERE {half})"
     t = perche.trace(query, con)
 
     for row, lin in list(zip(t.rows, t.lineage))[:15]:

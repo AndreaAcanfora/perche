@@ -77,10 +77,8 @@ class Rewriter:
             return node, provs
         if isinstance(node, exp.Select):
             return self.select(node, ctes)
-        if isinstance(node, exp.Union):
-            return self.union(node, ctes)
-        if isinstance(node, (exp.Intersect, exp.Except)):
-            raise UnsupportedQuery(f"{node.key.upper()} is not supported yet")
+        if isinstance(node, exp.SetOperation):
+            return self.setop(node, ctes)
         raise UnsupportedQuery(f"cannot trace a {node.key.upper()} query")
 
     def with_(self, node: exp.Expression, ctes: dict) -> dict:
@@ -141,38 +139,50 @@ class Rewriter:
                 out.append(Prov(name, p.source))
         return node, out
 
-    def union(self, node: exp.Union, ctes: dict) -> tuple[exp.Expression, list[Prov]]:
+    def setop(self, node: exp.SetOperation, ctes: dict) -> tuple[exp.Expression, list[Prov]]:
+        """UNION, INTERSECT and EXCEPT.
+
+        Each branch is padded to the same lineage columns (its own filled, the
+        other branch's NULL). Everything but UNION ALL then becomes a UNION ALL
+        grouped by the data columns, which merges the lineage of equal rows.
+        INTERSECT keeps groups seen on both sides, EXCEPT groups seen only on
+        the left, so the right side of EXCEPT never shows up in the lineage.
+        """
         ctes = self.with_(node, ctes)
+        is_union = isinstance(node, exp.Union)
+        if not is_union and not node.args.get("distinct"):
+            raise UnsupportedQuery(f"{node.key.upper()} ALL is not supported yet")
         left, lp = self.query(node.this, ctes)
         right, rp = self.query(node.expression, ctes)
 
-        # Both branches must end with the same lineage columns: each branch
-        # fills its own and leaves the other branch's NULL.
         out = [Prov(self.fresh(), p.source) for p in lp + rp]
-        node.set("this", self._pad(left, lp, out, 0))
-        node.set("expression", self._pad(right, rp, out, len(lp)))
+        side = None if is_union else self.fresh("side")
+        node.set("this", self._pad(left, lp, out, 0, side and (side, 0)))
+        node.set("expression", self._pad(right, rp, out, len(lp), side and (side, 1)))
 
-        if not node.args.get("distinct"):
+        if is_union and not node.args.get("distinct"):
             return node, out
 
-        # UNION == UNION ALL followed by a DISTINCT that merges lineage.
-        node.set("distinct", False)
         modifiers = {k: node.args.get(k) for k in ("order", "limit", "offset")}
-        for k in modifiers:
-            node.set(k, None)
+        all_ = exp.Union(this=node.this, expression=node.expression, distinct=False, by_name=node.args.get("by_name"))
         merged = [Prov(self.fresh(), p.source) for p in out]
         aggs = ", ".join(f"FLATTEN(LIST({p.col})) AS {m.col}" for p, m in zip(out, merged))
+        having = ""
+        if isinstance(node, exp.Intersect):
+            having = f" HAVING count(DISTINCT {side}) = 2"
+        elif isinstance(node, exp.Except):
+            having = f" HAVING max({side}) = 0"
         wrapper = _parse(
             f"SELECT COLUMNS(c -> NOT starts_with(c, '{PREFIX}')), {aggs} "
-            f"FROM __placeholder__ AS {self.fresh('u')} GROUP BY ALL"
+            f"FROM __placeholder__ AS {self.fresh('u')} GROUP BY ALL{having}"
         )
-        _from(wrapper).this.replace(exp.Subquery(this=node, alias=_from(wrapper).this.args["alias"]))
+        _from(wrapper).this.replace(exp.Subquery(this=all_, alias=_from(wrapper).this.args["alias"]))
         for k, v in modifiers.items():
             if v is not None:
                 wrapper.set(k, v)
         return wrapper, merged
 
-    def _pad(self, branch: exp.Expression, provs: list[Prov], out: list[Prov], offset: int):
+    def _pad(self, branch: exp.Expression, provs: list[Prov], out: list[Prov], offset: int, side=None):
         star = exp.Star()
         if provs:
             star.set("except_", [exp.column(p.col) for p in provs])
@@ -183,6 +193,9 @@ class Rewriter:
             else:
                 value = exp.cast(exp.null(), "BIGINT[]", dialect="duckdb")
             cols.append(exp.alias_(value, o.col))
+        if side:
+            name, value = side
+            cols.append(exp.alias_(exp.Literal.number(value), name))
         return exp.select(*cols).from_(exp.Subquery(this=branch, alias=exp.TableAlias(this=exp.to_identifier(self.fresh("b")))))
 
     # -- sources -----------------------------------------------------------

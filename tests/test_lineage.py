@@ -142,7 +142,8 @@ def test_why_returns_source_rows(con):
 @pytest.mark.parametrize(
     "sql",
     [
-        "SELECT a FROM c INTERSECT SELECT a FROM o",
+        "SELECT cust FROM o INTERSECT ALL SELECT id FROM c",
+        "SELECT cust FROM o EXCEPT ALL SELECT id FROM c",
         "SELECT DISTINCT ON (country) name FROM c",
         "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 3) SELECT n FROM r",
         "INSERT INTO c VALUES (4, 'D', 'DE')",
@@ -170,3 +171,18 @@ def test_repeated_traces_and_lazy_api(con, tmp_path):
 def test_duplicate_column_names(con):
     t = perche.trace("SELECT c.id, o.id FROM c JOIN o ON o.cust = c.id WHERE o.id = 12", con)
     assert (t.columns, t.rows) == (["id", "id"], [(2, 12)])
+
+
+def test_intersect(con):
+    sql = "SELECT cust FROM o INTERSECT SELECT id FROM c WHERE country = 'IT' ORDER BY 1"
+    assert run(con, sql) == [((1,), {"o": [0, 1], "c": [0]}), ((3,), {"o": [3], "c": [2]})]
+
+
+def test_except_keeps_only_left_lineage(con):
+    sql = "SELECT id FROM c EXCEPT SELECT cust FROM o WHERE amount > 4"
+    assert sorted(run(con, sql), key=repr) == [((2,), {"c": [1], "o": []}), ((3,), {"c": [2], "o": []})]
+
+
+def test_set_operations_nest(con):
+    sql = "(SELECT country FROM c EXCEPT SELECT 'FR') UNION ALL (SELECT 'X' INTERSECT SELECT 'X')"
+    assert sorted(run(con, sql), key=repr) == [(("IT",), {"c": [0, 2]}), (("X",), {"c": []})]
