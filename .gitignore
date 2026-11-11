@@ -5,3 +5,5 @@ dist/
 .pytest_cache/
 site/.cache/
 site/dist/
+site/test/node_modules/
+site/test/package-lock.json
