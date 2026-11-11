@@ -34,7 +34,7 @@ def test_row_json(capsys):
 
 def test_errors(capsys):
     assert main([QUERY, "--row", "9"]) == 2
-    assert main(["SELECT a FROM t INTERSECT SELECT a FROM t"]) == 2
+    assert main(["SELECT a FROM t INTERSECT ALL SELECT a FROM t"]) == 2
     assert "INTERSECT" in capsys.readouterr().err
 
 
