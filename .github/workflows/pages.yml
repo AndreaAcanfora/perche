@@ -35,7 +35,7 @@ jobs:
       - name: Smoke test in Chromium
         run: |
           npm install --no-save --prefix site/test playwright@1.49.1
-          (cd site/test && npx playwright install --with-deps chromium)
+          (cd site/test && npx playwright install chromium)
           (cd site/dist && python -m http.server 8000 &) && sleep 1
           NODE_PATH=site/test/node_modules node site/test/smoke.mjs http://localhost:8000/
       - uses: actions/upload-pages-artifact@v3
