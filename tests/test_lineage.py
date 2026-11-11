@@ -186,3 +186,11 @@ def test_except_keeps_only_left_lineage(con):
 def test_set_operations_nest(con):
     sql = "(SELECT country FROM c EXCEPT SELECT 'FR') UNION ALL (SELECT 'X' INTERSECT SELECT 'X')"
     assert sorted(run(con, sql), key=repr) == [(("IT",), {"c": [0, 2]}), (("X",), {"c": []})]
+
+
+@pytest.mark.parametrize("op", ["UNION", "UNION ALL", "INTERSECT", "EXCEPT"])
+def test_with_on_a_set_operation(con, op):
+    sql = f"WITH it AS (SELECT * FROM c WHERE country = 'IT') SELECT id FROM it {op} SELECT id FROM it WHERE id = 3 ORDER BY 1"
+    t = perche.trace(sql, con)
+    assert t.rows == con.execute(sql).fetchall()
+    assert all(lin["c"] for lin in t.lineage)

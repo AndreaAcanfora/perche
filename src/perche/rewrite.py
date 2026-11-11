@@ -13,7 +13,8 @@ import itertools
 import os
 from dataclasses import dataclass
 
-import duckdb
+from typing import Callable, Protocol
+
 import sqlglot
 from sqlglot import exp
 
@@ -51,9 +52,52 @@ def _parse(sql: str) -> exp.Expression:
     return sqlglot.parse_one(sql, read="duckdb")
 
 
-class Rewriter:
-    def __init__(self, con: duckdb.DuckDBPyConnection):
+class Catalog(Protocol):
+    """What the rewriter needs to know about the database it targets."""
+
+    def has_rowid(self, table_sql: str) -> bool:
+        """Whether ``SELECT rowid FROM <table_sql>`` works (a base table)."""
+
+    def copy(self, table_sql: str, name: str) -> None:
+        """Copy a view, file or table function into a new table ``name``."""
+
+
+class DuckDBCatalog:
+    def __init__(self, con):
         self.con = con
+
+    def has_rowid(self, table_sql: str) -> bool:
+        import duckdb
+
+        try:
+            self.con.execute(f"SELECT rowid FROM {table_sql} LIMIT 0")
+            return True
+        except duckdb.Error:
+            return False
+
+    def copy(self, table_sql: str, name: str) -> None:
+        self.con.execute(f"CREATE TEMP TABLE {name} AS SELECT * FROM {table_sql}")
+
+
+class TableCatalog:
+    """Only known base tables; no copies. Used where there is no live connection (the browser demo)."""
+
+    def __init__(self, tables: set[str], copy: Callable[[str, str], None] | None = None):
+        self.tables = {t.lower() for t in tables}
+        self._copy = copy
+
+    def has_rowid(self, table_sql: str) -> bool:
+        return table_sql.strip('"').lower() in self.tables
+
+    def copy(self, table_sql: str, name: str) -> None:
+        if self._copy is None:
+            raise UnsupportedQuery(f"unknown table {table_sql}; available: {', '.join(sorted(self.tables))}")
+        self._copy(table_sql, name)
+
+
+class Rewriter:
+    def __init__(self, catalog: Catalog):
+        self.catalog = catalog
         self.sources: dict[str, Source] = {}
 
     def fresh(self, kind: str = "") -> str:
@@ -181,6 +225,9 @@ class Rewriter:
         for k, v in modifiers.items():
             if v is not None:
                 wrapper.set(k, v)
+        # A WITH on the set operation must stay visible to both branches.
+        if w := _with(node):
+            wrapper.set("with_" if "with_" in wrapper.arg_types else "with", w)
         return wrapper, merged
 
     def _pad(self, branch: exp.Expression, provs: list[Prov], out: list[Prov], offset: int, side=None):
@@ -233,12 +280,12 @@ class Rewriter:
         bare.set("alias", None)
         key = bare.sql("duckdb")
         if key not in self.sources:
-            if self._has_rowid(key):
+            if self.catalog.has_rowid(key):
                 table = key
             else:
                 # Views, files and table functions have no stable rowid: copy them once.
                 table = self.fresh("src_")
-                self.con.execute(f"CREATE TEMP TABLE {table} AS SELECT * FROM {key}")
+                self.catalog.copy(key, table)
             self.sources[key] = Source(self._label(bare), table)
 
         qualifier = node.alias or self._default_alias(bare)
@@ -246,13 +293,6 @@ class Rewriter:
         sub = _parse(f"SELECT *, [rowid] AS {col} FROM {self.sources[key].table}")
         node.replace(exp.Subquery(this=sub, alias=self._alias(node, qualifier)))
         return qualifier, [Prov(col, key)]
-
-    def _has_rowid(self, table_sql: str) -> bool:
-        try:
-            self.con.execute(f"SELECT rowid FROM {table_sql} LIMIT 0")
-            return True
-        except duckdb.Error:
-            return False
 
     @staticmethod
     def _label(bare: exp.Table) -> str:
@@ -304,3 +344,20 @@ class Rewriter:
                 if agg.find_ancestor(exp.Window, exp.Select) is node:
                     return True
         return False
+
+
+def rewrite(sql: str, tables: set[str]) -> dict:
+    """Rewrite ``sql`` for a database holding ``tables``, without connecting to it.
+
+    Returns the traced SQL and its lineage columns, each with the source label
+    and the table to read rows from. The browser demo calls this from Pyodide.
+    """
+    rw = Rewriter(TableCatalog(tables))
+    tree, provs = rw.rewrite(sql)
+    return {
+        "sql": tree.sql("duckdb"),
+        "lineage": [
+            {"column": p.col, "source": rw.sources[p.source].label, "table": rw.sources[p.source].table}
+            for p in provs
+        ],
+    }
