@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.12", "3.13"]
+        deps: ["latest"]
+        include:
+          - python: "3.10"
+            deps: "oldest"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: |
+          pip install -e '.[test]'
+          if [ "${{ matrix.deps }}" = oldest ]; then pip install 'duckdb==1.1.*' 'sqlglot==30.0.*'; fi
+          pip list | grep -Ei 'duckdb|sqlglot'
+      - name: Test
+        run: pytest -q
+      - name: CLI smoke test
+        working-directory: examples
+        run: perche "SELECT c.country, sum(o.amount) FROM 'orders.csv' o JOIN 'customers.csv' c ON c.id = o.customer_id GROUP BY 1" --row 0
