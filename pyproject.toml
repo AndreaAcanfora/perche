@@ -1,0 +1,32 @@
+[project]
+name = "perche"
+version = "0.1.0"
+description = "git blame for data: find out which source rows produced each row of a SQL query"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Andrea Acanfora", email = "andreaacanfora95@gmail.com" }]
+requires-python = ">=3.10"
+dependencies = ["duckdb>=1.1", "sqlglot>=30"]
+keywords = ["lineage", "provenance", "sql", "duckdb", "data-quality", "debugging"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Topic :: Database",
+  "Programming Language :: Python :: 3",
+]
+
+[project.urls]
+Homepage = "https://github.com/AndreaAcanfora/perche"
+
+[project.scripts]
+perche = "perche.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
