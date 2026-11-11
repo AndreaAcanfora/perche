@@ -143,7 +143,7 @@ def test_lineage_alone_reproduces_the_row(seed):
         op = rnd.choice(["UNION", "INTERSECT", "EXCEPT"])
         first = perche.trace(query, con).columns[0]
         half = f'hash(z."{first}") % 2 = 0'
-        query = f"({query}) {op} (SELECT * FROM ({query}) z WHERE {half})"
+        query = f"WITH w AS ({query}) SELECT * FROM w {op} SELECT * FROM w z WHERE {half}"
     t = perche.trace(query, con)
 
     for row, lin in list(zip(t.rows, t.lineage))[:15]:

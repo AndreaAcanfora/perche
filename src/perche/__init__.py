@@ -6,7 +6,7 @@ import functools
 
 import duckdb
 
-from .rewrite import PREFIX, Rewriter, Source, UnsupportedQuery
+from .rewrite import PREFIX, DuckDBCatalog, Rewriter, Source, UnsupportedQuery
 
 __all__ = ["Pipeline", "Trace", "UnsupportedQuery", "trace"]
 __version__ = "0.1.0"
@@ -117,7 +117,7 @@ class Trace:
 def trace(sql: str, con: duckdb.DuckDBPyConnection | None = None) -> Trace:
     """Run ``sql`` on ``con`` (default: a new in-memory database) and track row lineage."""
     con = con if con is not None else duckdb.connect()
-    rewriter = Rewriter(con)
+    rewriter = Rewriter(DuckDBCatalog(con))
     tree, provs = rewriter.rewrite(sql)
     traced_sql = tree.sql("duckdb")
 
