@@ -14,7 +14,7 @@ import duckdb
 import sqlglot
 from sqlglot import exp
 
-from . import PREFIX, Trace, UnsupportedQuery, _ident, trace
+from . import Trace, UnsupportedQuery, _ident, trace
 
 
 class Pipeline:
@@ -39,10 +39,11 @@ class Pipeline:
     def run(self) -> Pipeline:
         for name in self.order:
             t = trace(self.steps[name], self.con)
+            hidden = f" EXCLUDE ({', '.join(t._provs)})" if t._provs else ""
             # Insertion order is kept, so the table's rowids are the trace's row numbers.
             self.con.execute(
                 f"CREATE OR REPLACE TABLE {_ident(name)} AS "
-                f"SELECT COLUMNS(c -> NOT starts_with(c, '{PREFIX}')) FROM {t._table} ORDER BY rowid"
+                f"SELECT *{hidden} FROM {t._table} ORDER BY rowid"
             )
             self.traces[name] = t
         return self

@@ -30,6 +30,7 @@ class Trace:
         self.columns = columns
         self.rows = rows
         self._table = table
+        self._provs = [p.col for p in provs]
         self._sources: dict[str, Source] = {}
         groups: dict[str, list[str]] = {}
         for p in provs:
