@@ -4,6 +4,10 @@
 
 *Perché* is Italian for “why”.
 
+**[Try it in your browser →](https://andreaacanfora.github.io/perche/)** Click any bar of a dashboard over 600k real New York taxi trips and see the rows behind it: trips dated 2002 in a January 2024 file, a 59,282-mile ride, a payment type the data dictionary doesn't define. Nothing to install: DuckDB-Wasm and perche run in the page.
+
+[![The demo: a bar chart of the longest taxi trip per borough, with the trips behind the Manhattan bar sorted by distance](https://raw.githubusercontent.com/AndreaAcanfora/perche/main/docs/demo.png)](https://andreaacanfora.github.io/perche/)
+
 ```console
 $ perche "SELECT c.country, sum(o.amount) AS revenue
           FROM 'orders.csv' o JOIN 'customers.csv' c ON c.id = o.customer_id
@@ -125,6 +129,9 @@ t.lineage         # lineage of every row (costly on big results)
 
 ## How it works
 
+The rewriting is plain Python on top of sqlglot and needs no database connection (`perche.rewrite.rewrite(sql, tables)`); that is how the browser demo runs it in Pyodide.
+
+
 perche parses the query with [sqlglot](https://github.com/tobymao/sqlglot) and rewrites it so that every row carries the ids of the source rows it came from:
 
 - each table, file or view read by the query gets an extra column holding `[rowid]`;
@@ -184,7 +191,6 @@ perche needs no database server, extension or fork. It works on files, and its g
 
 ## Roadmap
 
-- A browser dashboard where clicking a chart shows the source rows behind it, running entirely on DuckDB-Wasm.
 - Lineage through subqueries in `WHERE` (`IN`, `EXISTS`).
 
 ## License
