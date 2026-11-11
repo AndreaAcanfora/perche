@@ -172,8 +172,9 @@ class Rewriter:
             having = f" HAVING count(DISTINCT {side}) = 2"
         elif isinstance(node, exp.Except):
             having = f" HAVING max({side}) = 0"
+        hidden = ", ".join([p.col for p in out] + ([side] if side else []))
         wrapper = _parse(
-            f"SELECT COLUMNS(c -> NOT starts_with(c, '{PREFIX}')), {aggs} "
+            f"SELECT * EXCLUDE ({hidden}), {aggs} "
             f"FROM __placeholder__ AS {self.fresh('u')} GROUP BY ALL{having}"
         )
         _from(wrapper).this.replace(exp.Subquery(this=all_, alias=_from(wrapper).this.args["alias"]))

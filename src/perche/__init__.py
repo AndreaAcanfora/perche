@@ -8,7 +8,7 @@ import duckdb
 
 from .rewrite import PREFIX, Rewriter, Source, UnsupportedQuery
 
-__all__ = ["Trace", "UnsupportedQuery", "trace"]
+__all__ = ["Pipeline", "Trace", "UnsupportedQuery", "trace"]
 __version__ = "0.1.0"
 
 
@@ -30,6 +30,7 @@ class Trace:
         self.columns = columns
         self.rows = rows
         self._table = table
+        self._provs = [p.col for p in provs]
         self._sources: dict[str, Source] = {}
         groups: dict[str, list[str]] = {}
         for p in provs:
@@ -56,6 +57,25 @@ class Trace:
         (r,) = self._select(list(self._merged.values()), "WHERE rowid = $i", {"i": i})
         return dict(zip(self._merged, r))
 
+    def lineage_of_rows(self, ids: list[int]) -> dict[str, list[int]]:
+        """Source row ids behind several rows at once, merged."""
+        if not self._merged:
+            return {}
+        exprs = [f"list_sort(list_distinct(flatten(list({e}))))" for e in self._merged.values()]
+        sql = f"SELECT {', '.join(exprs)} FROM {self._table} WHERE rowid IN (SELECT unnest($ids::BIGINT[]))"
+        (r,) = self.con.execute(sql, {"ids": list(ids)}).fetchall()
+        return {label: v or [] for label, v in zip(self._merged, r)}
+
+    def source_rows(self, label: str, ids: list[int]) -> list[dict]:
+        """Rows ``ids`` of source ``label``, each as a dict with its ``rowid`` first."""
+        cur = self.con.execute(
+            f"SELECT rowid, * FROM {self._sources[label].table} "
+            "WHERE rowid IN (SELECT unnest($ids::BIGINT[])) ORDER BY rowid",
+            {"ids": list(ids)},
+        )
+        names = [d[0] for d in cur.description]
+        return [dict(zip(names, r)) for r in cur.fetchall()]
+
     @functools.cached_property
     def lineage(self) -> list[dict[str, list[int]]]:
         """Lineage of every row. Prefer :meth:`lineage_of` on large results."""
@@ -71,18 +91,7 @@ class Trace:
 
     def why(self, i: int) -> dict[str, list[dict]]:
         """The source rows behind row ``i``, each as a dict with its ``rowid`` first."""
-        out = {}
-        for label, ids in self.lineage_of(i).items():
-            if not ids:
-                continue
-            cur = self.con.execute(
-                f"SELECT rowid, * FROM {self._sources[label].table} "
-                "WHERE rowid IN (SELECT unnest($ids::BIGINT[])) ORDER BY rowid",
-                {"ids": ids},
-            )
-            names = [d[0] for d in cur.description]
-            out[label] = [dict(zip(names, r)) for r in cur.fetchall()]
-        return out
+        return {label: self.source_rows(label, ids) for label, ids in self.lineage_of(i).items() if ids}
 
     def close(self) -> None:
         """Drop the temporary table holding the traced result."""
@@ -122,3 +131,6 @@ def trace(sql: str, con: duckdb.DuckDBPyConnection | None = None) -> Trace:
     if not data:
         rows = [() for _ in rows]
     return Trace(con, traced_sql, table, [names[i] for i in data], rows, provs, rewriter.sources)
+
+
+from .pipeline import Pipeline  # noqa: E402  (needs trace)
