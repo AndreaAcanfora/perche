@@ -63,6 +63,50 @@ perche QUERY --sql            # print the rewritten query perche runs
 perche - < query.sql          # read the query from stdin
 ```
 
+## Pipelines
+
+Real data rarely comes from one query. Put each step in its own `.sql` file; steps read files and each other by name:
+
+```
+examples/pipeline/
+├── clean_orders.sql   SELECT o.id, o.amount, c.country FROM '../orders.csv' o JOIN '../customers.csv' c … WHERE o.status = 'paid'
+└── revenue.sql        SELECT country, count(*) AS orders, sum(amount) AS revenue FROM clean_orders GROUP BY country
+```
+
+`perche run` runs the steps in dependency order and follows any row back through every step:
+
+```console
+$ perche run examples/pipeline --row 0
+revenue row 0:
+  country  orders  revenue
+  ───────  ──────  ───────
+  IT       5       2212.78
+
+← step clean_orders  (5 rows)
+  rowid  id   amount  country
+  ─────  ───  ──────  ───────
+  0      101  120     IT
+  1      107  12.3    IT
+  3      106  999.99  IT
+  4      102  80.5    IT
+  5      105  999.99  IT
+
+    ← ../orders.csv  (5 rows)
+      rowid  id   customer_id  amount  status
+      …
+    ← ../customers.csv  (3 rows)
+      …
+```
+
+Relative paths are resolved from the pipeline directory. With `--db shop.duckdb` the step tables are written to that database. From Python:
+
+```python
+p = perche.Pipeline.from_dir("examples/pipeline").run()   # or Pipeline({"step": "SELECT …"}, con)
+p["revenue"].rows        # each step is a Trace
+p.roots("revenue", [0])  # {'../orders.csv': [0, 1, 4, 5, 6], '../customers.csv': [0, 1, 3]}
+p.why("revenue", 0)      # the full tree, as dicts
+```
+
 ## Python
 
 ```python
@@ -100,6 +144,7 @@ The tests check perche against ground truth computed independently:
 
 - **Exact oracle.** 300 random queries over a shop database with NULLs, orphans and duplicates (inner and left joins across up to three tables, AND/OR filters, `GROUP BY`, global aggregates, `DISTINCT`). For each query the generator also writes an oracle query that collects the rowids by hand. Both must produce exactly the same lineage.
 - **Metamorphic.** Wrapping each query in a subquery, in a CTE, or in a `UNION ALL` with itself must not change any row's lineage; `INTERSECT`, `UNION` and `EXCEPT` of a query with itself must match its `DISTINCT`.
+- **Pipelines.** 150 random two-step pipelines must give each row the same original sources as the same logic written as one query with a CTE.
 - **Sufficiency.** Re-running a query, composed with CTEs, `UNION`, `INTERSECT` and `EXCEPT`, on *only* the lineage rows of a result row must produce that row again.
 
 Breaking the engine on purpose shows the tests notice: dropping the lineage of joined tables fails 233 of them, and treating `DISTINCT` like a projection fails 63.
@@ -139,7 +184,6 @@ perche needs no database server, extension or fork. It works on files, and its g
 
 ## Roadmap
 
-- Pipelines: lineage across several steps (`raw → clean → report`), each a SQL file.
 - A browser dashboard where clicking a chart shows the source rows behind it, running entirely on DuckDB-Wasm.
 - Lineage through subqueries in `WHERE` (`IN`, `EXISTS`).
 
