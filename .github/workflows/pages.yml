@@ -19,17 +19,17 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: site/.cache
           key: tlc-2024-01
       - run: pip install -e .
       - run: python site/build.py
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Smoke test in Chromium
@@ -38,7 +38,7 @@ jobs:
           (cd site/test && npx playwright install chromium)
           (cd site/dist && python -m http.server 8000 &) && sleep 1
           NODE_PATH=site/test/node_modules node site/test/smoke.mjs http://localhost:8000/
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site/dist
 
@@ -51,4 +51,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
